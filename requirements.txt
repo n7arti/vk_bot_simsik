@@ -1,0 +1,6 @@
+vk_api
+vk-api-bot-longpoll
+pandas
+gspread
+oauth2client
+python-dotenv

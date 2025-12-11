@@ -17,6 +17,7 @@ load_dotenv()
 # === НАСТРОЙКИ ===
 VK_TOKEN = os.getenv('VK_TOKEN')
 GROUP_ID = os.getenv('GROUP_ID') 
+USER_TOKEN = os.getenv('USER_TOKEN') 
 
 # Настройки Google Sheets
 with open('/home/n777arti/vk_bot_simsik/google_credentials.json', 'r') as f:
@@ -29,6 +30,9 @@ WORKSHEET_NAME = 'Лист1'  # Имя листа в таблице
 vk_session = vk_api.VkApi(token=VK_TOKEN)
 vk = vk_session.get_api()
 longpoll = VkBotLongPoll(vk_session, GROUP_ID)
+
+user_vk_session = vk_api.VkApi(token=USER_TOKEN)
+user_vk = user_vk_session.get_api()
 
 print("✅ Бот успешно запущен и ожидает команд!")
 
@@ -164,7 +168,7 @@ def get_posts_from_groups(group_data):
                 
                 group_id = group_info[0]['id'] 
                 
-                posts = vk.wall.get(
+                posts = user_vk.wall.get(
                     owner_id=f"-{group_id}",  # Для групп owner_id отрицательный
                     count=10,
                     filter='owner'  # Только посты от имени группы

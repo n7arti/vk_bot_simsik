@@ -8,6 +8,8 @@ import json
 import time
 import os
 from dotenv import load_dotenv
+import time
+from datetime import datetime, timedelta, timezone
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -17,7 +19,8 @@ VK_TOKEN = os.getenv('VK_TOKEN')
 GROUP_ID = os.getenv('GROUP_ID') 
 
 # Настройки Google Sheets
-CREDENTIALS_JSON = json.loads(os.getenv('CREDENTIALS_JSON'))
+with open('/home/n777arti/vk_bot_simsik/google_credentials.json', 'r') as f:
+    CREDENTIALS_JSON = json.load(f)
 
 SPREADSHEET_NAME = 'Бот СИМСИК'
 WORKSHEET_NAME = 'Лист1'  # Имя листа в таблице
@@ -32,11 +35,7 @@ print("✅ Бот успешно запущен и ожидает команд!"
 # === ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS ===
 def get_commands_from_sheets():
     """
-    Загружает команды и варианты из Google Sheets в формате:
-    Первая строка - команды (заголовки столбцов)
-    Последующие строки - варианты ответов для каждой команды
-
-    Возвращает словарь: {команда: [вариант1, вариант2, ...]}
+    Загружает команды и варианты из Google Sheets
     """
     try:
         # Аутентификация с Google Sheets API
@@ -59,25 +58,47 @@ def get_commands_from_sheets():
         headers = all_data[0]
         rows = all_data[1:]  # Остальные строки - данные
 
-        # Создаем словарь для хранения команд и их вариантов
+        # Создаем словарь для хранения команд и их данных
         commands_dict = {}
 
         # Проходим по каждому заголовку (команде)
         for col_idx, command in enumerate(headers):
-            if not command or not command.startswith('!'):
-                continue  # Пропускаем пустые или не команды
-
-            variants = []
-            # Собираем все непустые варианты из этого столбца
-            for row in rows:
-                if col_idx < len(row):  # Проверяем, что столбец существует в этой строке
-                    cell_value = row[col_idx].strip()
-                    if cell_value:  # Добавляем только непустые значения
-                        variants.append(cell_value)
-
-            if variants:  # Добавляем команду только если есть варианты
-                commands_dict[command] = variants
-                print(f"✅ Загружена команда '{command}' с {len(variants)} вариантами")
+            if not command:
+                continue
+                
+            command = command.strip()
+            
+            # Для команды !постысегодня обрабатываем особо
+            if command.lower() == '!постысегодня':
+                group_data = []
+                for row in rows:
+                    if col_idx < len(row):
+                        cell_value = row[col_idx].strip()
+                        if cell_value and ';' in cell_value:
+                            group_data.append(cell_value)
+                
+                if group_data:
+                    commands_dict[command] = {
+                        'type': 'posts',
+                        'data': group_data
+                    }
+                    print(f"✅ Загружена команда '{command}' с {len(group_data)} группами")
+            
+            # Для обычных команд (начинающихся с !)
+            elif command.startswith('!'):
+                variants = []
+                for row in rows:
+                    if col_idx < len(row):
+                        cell_value = row[col_idx].strip()
+                        if cell_value:
+                            variants.append(cell_value)
+                
+                if variants:
+                    commands_dict[command] = {
+                        'type': 'random',
+                        'data': variants
+                    }
+                    print(f"✅ Загружена команда '{command}' с {len(variants)} вариантами")
 
         print(f"🎉 Всего загружено команд: {len(commands_dict)}")
         return commands_dict
@@ -87,22 +108,94 @@ def get_commands_from_sheets():
         return {}
 
 # === ОСНОВНАЯ ЛОГИКА БОТА ===
-def get_random_response(command, commands_data):
+def get_response_for_command(command, commands_data):
     """
-    Возвращает случайный ответ для заданной команды
+    Возвращает ответ для заданной команды в зависимости от её типа
     """
     command = command.strip().lower()
-
+    
     # Ищем команду с учетом регистра
     if command in commands_data:
-        return random.choice(commands_data[command])
-
+        cmd_data = commands_data[command]
+        
+        if cmd_data['type'] == 'random':
+            return random.choice(cmd_data['data'])
+        elif cmd_data['type'] == 'posts':
+            return get_posts_from_groups(cmd_data['data'])
+    
     # Если не нашли точное совпадение, пробуем найти без учета регистра
-    for cmd, variants in commands_data.items():
+    for cmd, cmd_data in commands_data.items():
         if cmd.lower() == command:
-            return random.choice(variants)
-
+            if cmd_data['type'] == 'random':
+                return random.choice(cmd_data['data'])
+            elif cmd_data['type'] == 'posts':
+                return get_posts_from_groups(cmd_data['data'])
+    
     return f"🤔 Команда '{command}' не найдена в таблице. Доступные команды: {', '.join(commands_data.keys())}"
+
+def get_posts_from_groups(group_data):
+    """
+    Получает последние посты из указанных групп и форматирует результат
+    
+    group_data: список строк в формате "[Название];[ID]"
+    Возвращает: отформатированную строку с постами
+    """
+    try:
+        results = []
+        today = datetime.now(timezone(timedelta(hours=3)))  # Время VK - UTC+3
+        today_date = today.date()
+        
+        for group_entry in group_data:
+            if ';' not in group_entry:
+                continue
+                
+            name, group_id = group_entry.split(';', 1)
+            name = name.strip()
+            group_id = group_id.strip()
+            
+            try:
+                # Получаем последние 2 поста из группы
+                posts = vk.wall.get(
+                    owner_id=f"-{group_id}",  # Для групп owner_id отрицательный
+                    count=10,
+                    filter='owner'  # Только посты от имени группы
+                )
+                
+                today_posts = []
+                
+                # Фильтруем ТОЛЬКО посты за сегодня
+                for post in posts['items']:
+                    post_date = datetime.fromtimestamp(post['date'], timezone(timedelta(hours=3))).date()
+                    
+                    if post_date == today_date:
+                        today_posts.append(post)
+                        
+                if not today_posts:
+                    continue
+                
+                post_links = []
+                for i, post in enumerate(today_posts):  # Все посты без ограничения
+                    post_id = post['id']
+                    post_url = f"https://vk.com/wall-{group_id}_{post_id}"
+                    post_links.append(f"[{post_url}|пост {i + 1}]")
+                
+                # Добавляем задержку между запросами к API
+                time.sleep(0.4)
+                
+                if post_links:
+                    results.append(f"{name}({', '.join(post_links)})")
+                    
+            except Exception as e:
+                continue
+        
+        if results:
+            return f"📊 **Посты {today_date.strftime('%d.%m.%Y')}:**\n" + "\n".join(results)
+        else:
+            return f"🤔 Не найдено постов за сегодня ({today_date.strftime('%d.%m.%Y')})"
+            
+    except Exception as e:
+        print(f"❌ Критическая ошибка при получении постов: {e}")
+        return "❌ Ошибка при получении данных о постах"
 
 # === ГЛАВНЫЙ ЦИКЛ БОТА ===
 def main():
@@ -130,7 +223,7 @@ def main():
                     command = text
 
                     # Получаем случайный ответ
-                    response = get_random_response(command, commands_data)
+                    response = get_response_for_command(command, commands_data)
 
                     # Отправляем ответ в беседу
                     try:

@@ -149,12 +149,21 @@ def get_posts_from_groups(group_data):
             if ';' not in group_entry:
                 continue
                 
-            name, group_id = group_entry.split(';', 1)
+            name, screen_name = group_entry.split(';', 1)
             name = name.strip()
-            group_id = group_id.strip()
+            screen_name = screen_name.strip()
             
             try:
-                # Получаем последние 2 поста из группы
+                group_info = vk.groups.getById(
+                    group_id=screen_name,
+                    fields='id'
+                )
+                
+                if not group_info:
+                    continue
+                
+                group_id = group_info[0]['id'] 
+                
                 posts = vk.wall.get(
                     owner_id=f"-{group_id}",  # Для групп owner_id отрицательный
                     count=10,
